@@ -180,10 +180,13 @@ class VerifyPanelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label=None, style=discord.ButtonStyle.success, custom_id="verify:start")
+    @discord.ui.button(
+        label=(VERIFY_BUTTON_LABEL or "Verify"),
+        style=discord.ButtonStyle.success,
+        custom_id="verify:start"
+    )
     async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        # label dynamic (env)
-        button.label = VERIFY_BUTTON_LABEL
+        
         member = interaction.user
         # already verified?
         vrole = interaction.guild.get_role(VERIFIED_ROLE_ID)
