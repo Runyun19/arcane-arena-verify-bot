@@ -1,10 +1,10 @@
-# main.py — Arcane Arena Verify Bot (Panel + Modal + Confirm, Mods, Sheets)
+# main.py — Verify Bot (Panel + Modal + Confirm, Mods, Sheets, strict 9-digit)
 import os, re, json, base64, discord
 from discord import app_commands
 from datetime import datetime
 
 # ── ENV / IDs ────────────────────────────────────────────────────────────────
-TOKEN               = os.getenv("DISCORD_TOKEN")
+TOKEN               = os.getenv("DISCORD_TOKEN", "")
 
 REGISTER_CHANNEL_ID = int(os.getenv("REGISTER_CHANNEL_ID", "0"))   # #welcome
 LOG_CHANNEL_ID      = int(os.getenv("LOG_CHANNEL_ID", "0"))        # #player-id-log
@@ -12,7 +12,7 @@ VERIFIED_ROLE_ID    = int(os.getenv("VERIFIED_ROLE_ID", "0"))      # Verified ro
 
 # Moderation / permissions
 MOD_ROLE_ID   = int(os.getenv("MOD_ROLE_ID", "0"))                 # optional role allowed to use commands
-AUTO_REGISTER = os.getenv("AUTO_REGISTER", "false").lower() in ("1", "true", "yes")  # default false (panel kullanımını teşvik)
+AUTO_REGISTER = os.getenv("AUTO_REGISTER", "false").lower() in ("1", "true", "yes")  # default: panel kullan
 ID_LENGTH     = int(os.getenv("ID_LENGTH", "9"))
 
 # Branding / jump links
@@ -20,17 +20,19 @@ GUILD_ID    = int(os.getenv("GUILD_ID", "0"))
 SERVER_NAME = os.getenv("SERVER_NAME", "Arcane Arena")
 BRAND       = os.getenv("BRAND", "Arcane Arena")
 
-# Welcome panel text (opsiyonel özelleştirme)
+# Welcome panel text / visuals
 WELCOME_TITLE = os.getenv("WELCOME_TITLE", "Welcome to Arcane Arena!")
 WELCOME_DESC  = os.getenv(
     "WELCOME_DESC",
     "Arcane Arena — the most competitive tower defense experience.\n\n"
     "To unlock the server, click **Verify** and enter your **Player ID** "
-    "(exactly {n} digits). Example: `123456789`.\n\n"
+    f"(exactly {{n}} digits). Example: {'9'*9}\n\n"
     "Your message will be private. If your DMs are closed, you may miss the confirmation."
 ).format(n=ID_LENGTH)
+WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")   # embed.set_image
+WELCOME_THUMB_URL = os.getenv("WELCOME_THUMB_URL", "")   # embed.set_thumbnail
 
-# Button & modal labels (ops.)
+# Button & modal labels
 VERIFY_BUTTON_LABEL  = os.getenv("VERIFY_BUTTON_LABEL", "Verify")
 MODAL_TITLE          = os.getenv("MODAL_TITLE", "Enter your Player ID")
 MODAL_FIELD_LABEL    = os.getenv("MODAL_FIELD_LABEL", f"Player ID (exactly {ID_LENGTH} digits)")
@@ -48,8 +50,8 @@ CM_ROLE_ID      = int(os.getenv("CM_ROLE_ID", "0"))
 SUPPORT_USER_ID = os.getenv("SUPPORT_USER_ID", "0")
 
 # ── VALIDATION ───────────────────────────────────────────────────────────────
-ONLY_ASCII_DIGITS   = re.compile(r"^\d+$")
-EXACT_ASCII_DIGITS  = re.compile(rf"^\d{{{ID_LENGTH}}}$")  # exactly ID_LENGTH ASCII digits
+# ham girdi tam olarak yalnızca {ID_LENGTH} adet rakam olmalı (harf/boşluk yok)
+EXACT_ASCII_DIGITS_RAW = re.compile(rf"^\d{{{ID_LENGTH}}}$")
 
 # ── TEXTS (EN) ───────────────────────────────────────────────────────────────
 CHANNEL_MENTION_TEXT = f"<#{REGISTER_CHANNEL_ID}>"
@@ -64,15 +66,7 @@ def cm_contact():
         return f"<@&{CM_ROLE_ID}>"
     return "the Community Managers"
 
-MSG_TOO_SHORT = (
-    "{mention} You sent **{typed} digits** — you need **exactly {need}**."
-)
-MSG_TOO_LONG = (
-    "{mention} You sent **{typed} digits** — that’s **more than {need}**."
-)
-MSG_NON_DIGIT = (
-    "{mention} Only numbers are allowed. Please enter digits only."
-)
+MSG_INVALID = "{mention} Invalid Player ID. Please enter your **{need}-digit** Player ID."
 MSG_ALREADY_VERIFIED = (
     "{mention} You are **already verified**. Updates are disabled. "
     "Please DM {cm} to request a change."
@@ -186,9 +180,7 @@ class VerifyPanelView(discord.ui.View):
         custom_id="verify:start"
     )
     async def verify_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-        
         member = interaction.user
-        # already verified?
         vrole = interaction.guild.get_role(VERIFIED_ROLE_ID)
         if vrole and vrole in member.roles:
             return await interaction.response.send_message(
@@ -208,28 +200,15 @@ class VerifyModal(discord.ui.Modal, title=MODAL_TITLE):
 
     async def on_submit(self, interaction: discord.Interaction):
         raw = str(self.player_id_input.value).strip()
-        digits = "".join(ch for ch in raw if ch.isascii() and ch.isdigit())
-        typed = len(digits)
 
-        # validation messages
-        if typed == 0:
+        # strict: tam olarak 9 (ID_LENGTH) rakam olmalı
+        if not EXACT_ASCII_DIGITS_RAW.fullmatch(raw):
             return await interaction.response.send_message(
-                MSG_NON_DIGIT.format(mention=interaction.user.mention), ephemeral=True
-            )
-        if typed < ID_LENGTH:
-            return await interaction.response.send_message(
-                MSG_TOO_SHORT.format(mention=interaction.user.mention, typed=typed, need=ID_LENGTH), ephemeral=True
-            )
-        if typed > ID_LENGTH:
-            return await interaction.response.send_message(
-                MSG_TOO_LONG.format(mention=interaction.user.mention, typed=typed, need=ID_LENGTH), ephemeral=True
-            )
-        if not EXACT_ASCII_DIGITS.fullmatch(digits):
-            return await interaction.response.send_message(
-                MSG_NON_DIGIT.format(mention=interaction.user.mention), ephemeral=True
+                MSG_INVALID.format(mention=interaction.user.mention, need=ID_LENGTH),
+                ephemeral=True
             )
 
-        # show confirm view (ephemeral)
+        digits = raw  # fullmatch geçti; güvenli
         view = ConfirmView(player_id=digits)
         emb = discord.Embed(
             title="Confirm your Player ID",
@@ -247,7 +226,6 @@ class ConfirmView(discord.ui.View):
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         member = interaction.user
         guild  = interaction.guild
-        # already verified?
         vrole = guild.get_role(VERIFIED_ROLE_ID)
         if vrole and vrole in member.roles:
             return await interaction.response.edit_message(
@@ -264,14 +242,13 @@ class ConfirmView(discord.ui.View):
 # ── Events ───────────────────────────────────────────────────────────────────
 @client.event
 async def on_ready():
-    # persistent button
-    client.add_view(VerifyPanelView())
+    client.add_view(VerifyPanelView())  # persistent view
     await tree.sync()
     print(f"✅ Login successful: {client.user} (ID_LENGTH={ID_LENGTH}, AUTO_REGISTER={AUTO_REGISTER})")
 
 @client.event
 async def on_message(message: discord.Message):
-    # 1) Block DMs; redirect users
+    # DMs → yönlendir
     if not message.guild and not message.author.bot:
         try:
             await message.channel.send(DM_BLOCK)
@@ -279,13 +256,13 @@ async def on_message(message: discord.Message):
             pass
         return
 
-    # 2) Optional: legacy auto-register flow (by message) if enabled
+    # Auto-register modu açıksa (#welcome’a yazınca)
     if not AUTO_REGISTER:
         return
     if message.author.bot or message.channel.id != REGISTER_CHANNEL_ID:
         return
 
-    try:  # privacy: delete user message
+    try:
         await message.delete()
     except:
         pass
@@ -306,18 +283,14 @@ async def on_message(message: discord.Message):
             )
         return
 
-    digits = "".join(ch for ch in message.content if ch.isascii() and ch.isdigit())
-    typed = len(digits)
-    if typed == 0:
-        return await send_temp(message.channel, MSG_NON_DIGIT.format(mention=member.mention))
-    if typed < ID_LENGTH:
-        return await send_temp(message.channel, MSG_TOO_SHORT.format(mention=member.mention, typed=typed, need=ID_LENGTH))
-    if typed > ID_LENGTH:
-        return await send_temp(message.channel, MSG_TOO_LONG.format(mention=member.mention, typed=typed, need=ID_LENGTH))
-    if not EXACT_ASCII_DIGITS.fullmatch(digits):
-        return await send_temp(message.channel, MSG_NON_DIGIT.format(mention=member.mention))
+    content = message.content.strip()
+    if not EXACT_ASCII_DIGITS_RAW.fullmatch(content):
+        return await send_temp(
+            message.channel,
+            MSG_INVALID.format(mention=member.mention, need=ID_LENGTH)
+        )
 
-    await apply_success(guild, member, digits, source="auto")
+    await apply_success(guild, member, content, source="auto")
 
 # ── Slash Commands (mod-only) ────────────────────────────────────────────────
 @tree.command(name="setup_panel", description="Post the Verify panel (mods only).")
@@ -325,8 +298,32 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
     if not is_mod(interaction.user):
         return await interaction.response.send_message("You don’t have permission.", ephemeral=True)
     target = channel or interaction.channel
+
+    # izin kontrolü — eksikleri ephemeralde bildir
+    me = interaction.guild.me
+    perms = target.permissions_for(me)
+    needed = {
+        "view_channel": "View Channel",
+        "send_messages": "Send Messages",
+        "embed_links": "Embed Links",
+        "read_message_history": "Read Message History",
+        "use_application_commands": "Use Application Commands",
+    }
+    missing = [label for attr, label in needed.items() if not getattr(perms, attr, False)]
+    if missing:
+        pretty = ", ".join(missing)
+        return await interaction.response.send_message(
+            f"I’m missing these permissions in {target.mention}: **{pretty}**",
+            ephemeral=True
+        )
+
     emb = discord.Embed(title=WELCOME_TITLE, description=WELCOME_DESC, color=COLOR_WARN)
     emb.set_author(name=f"{BRAND} Verify")
+    if WELCOME_IMAGE_URL:
+        emb.set_image(url=WELCOME_IMAGE_URL)
+    if WELCOME_THUMB_URL:
+        emb.set_thumbnail(url=WELCOME_THUMB_URL)
+
     try:
         await target.send(embed=emb, view=VerifyPanelView())
         await interaction.response.send_message("Panel posted.", ephemeral=True)
@@ -337,20 +334,23 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
 async def verify_cmd(interaction: discord.Interaction, user: discord.Member, player_id: str):
     if not is_mod(interaction.user):
         return await interaction.response.send_message("You don’t have permission.", ephemeral=True)
-    digits = "".join(ch for ch in player_id if ch.isascii() and ch.isdigit())
-    if not digits or not ONLY_ASCII_DIGITS.fullmatch(digits):
+    raw = player_id.strip()
+    if not EXACT_ASCII_DIGITS_RAW.fullmatch(raw):
         return await interaction.response.send_message(
-            f"Only digits are allowed. Example: `{'9'*ID_LENGTH}`", ephemeral=True
-        )
-    if len(digits) != ID_LENGTH:
-        return await interaction.response.send_message(
-            f"ID must be exactly **{ID_LENGTH}** digits. You sent **{len(digits)}**.", ephemeral=True
+            MSG_INVALID.format(mention=user.mention, need=ID_LENGTH),
+            ephemeral=True, allowed_mentions=allowed_mentions_users_only
         )
     vrole = interaction.guild.get_role(VERIFIED_ROLE_ID)
     if vrole and vrole in user.roles:
-        return await interaction.response.send_message(f"{user.mention} is already verified.", ephemeral=True)
-    await apply_success(interaction.guild, user, digits, source="manual")
-    await interaction.response.send_message(f"✅ Verified {user.mention} with ID `{digits}`.", ephemeral=True)
+        return await interaction.response.send_message(
+            f"{user.mention} is already verified.",
+            ephemeral=True, allowed_mentions=allowed_mentions_users_only
+        )
+    await apply_success(interaction.guild, user, raw, source="manual")
+    await interaction.response.send_message(
+        f"✅ Verified {user.mention} with ID `{raw}`.",
+        ephemeral=True, allowed_mentions=allowed_mentions_users_only
+    )
 
 @tree.command(name="unverify", description="Remove the Verified role (mods only).")
 async def unverify_cmd(interaction: discord.Interaction, user: discord.Member):
@@ -368,4 +368,16 @@ async def unverify_cmd(interaction: discord.Interaction, user: discord.Member):
         await log_ch.send(f"🗑️ Unverified {user.mention}.", allowed_mentions=allowed_mentions_users_only)
     await interaction.response.send_message(f"Done. Removed Verified from {user.mention}.", ephemeral=True)
 
+# (opsiyonel teşhis) — Google Sheet'e test satırı
+@tree.command(name="sheets_test", description="Append a test row to Google Sheet (mods only).")
+async def sheets_test(interaction: discord.Interaction):
+    if not is_mod(interaction.user):
+        return await interaction.response.send_message("No permission.", ephemeral=True)
+    try:
+        sheet_append_row(interaction.guild, interaction.user, "9"*ID_LENGTH, "test")
+        await interaction.response.send_message("Wrote a test row ✓", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"Failed: `{e}`", ephemeral=True)
+
+# ── RUN ──────────────────────────────────────────────────────────────────────
 client.run(TOKEN)
