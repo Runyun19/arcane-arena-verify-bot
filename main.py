@@ -361,6 +361,7 @@ async def on_message(message: discord.Message):
 async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.TextChannel = None):
     if not is_mod(interaction.user):
         return await interaction.response.send_message("You don’t have permission.", ephemeral=True)
+
     target = channel or interaction.channel
 
     # Bot izin kontrolü
@@ -382,11 +383,10 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
             ephemeral=True
         )
 
-   emb = discord.Embed(title=WELCOME_TITLE, description=WELCOME_DESC, color=COLOR_WARN)
-# emb.set_author(name=f"{BRAND} Verify")
+    emb = discord.Embed(title=WELCOME_TITLE, description=WELCOME_DESC, color=COLOR_WARN)
+    # emb.set_author(name=f"{BRAND} Verify")  # İSTEMİYORSAN KAPALI KALSIN
 
-
-    # Görsel: önce repo dosyası, yoksa URL
+    # Görsel: önce repo'daki dosya, yoksa URL fallback
     file = None
     if os.path.exists(ASSET_IMAGE_PATH):
         fname = os.path.basename(ASSET_IMAGE_PATH)
