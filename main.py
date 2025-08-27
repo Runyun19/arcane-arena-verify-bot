@@ -359,4 +359,72 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
         await interaction.response.send_message(f"Failed: `{e}`", ephemeral=True)
 
 @tree.command(name="verify", description="Manually verify a user with a Player ID (mods only).")
-async def verify_cmd(interaction: discord.Interaction,_
+async def verify_cmd(interaction: discord.Interaction, user: discord.Member, player_id: str):
+    if not is_mod(interaction.user):
+        return await interaction.response.send_message("You don’t have permission.", ephemeral=True)
+    raw = player_id.strip()
+    if not EXACT_ASCII_DIGITS_RAW.fullmatch(raw):
+        return await interaction.response.send_message(
+            MSG_INVALID.format(mention=user.mention, need=ID_LENGTH),
+            ephemeral=True, allowed_mentions=allowed_mentions_users_only
+        )
+    vrole = interaction.guild.get_role(VERIFIED_ROLE_ID)
+    if vrole and vrole in user.roles:
+        return await interaction.response.send_message(
+            f"{user.mention} is already verified.",
+            ephemeral=True, allowed_mentions=allowed_mentions_users_only
+        )
+    await apply_success(interaction.guild, user, raw, source="manual")
+    await interaction.response.send_message(
+        f"✅ Verified {user.mention} with ID `{raw}`.",
+        ephemeral=True, allowed_mentions=allowed_mentions_users_only
+    )
+
+@tree.command(name="unverify", description="Remove the Verified role (mods only).")
+async def unverify_cmd(interaction: discord.Interaction, user: discord.Member):
+    if not is_mod(interaction.user):
+        return await interaction.response.send_message("You don’t have permission.", ephemeral=True)
+    vrole = interaction.guild.get_role(VERIFIED_ROLE_ID)
+    if not vrole or vrole not in user.roles:
+        return await interaction.response.send_message(f"{user.mention} is not verified.", ephemeral=True)
+    try:
+        await user.remove_roles(vrole, reason="Manual unverify")
+    except Exception as e:
+        return await interaction.response.send_message(f"Failed: `{e}`", ephemeral=True)
+    log_ch = interaction.guild.get_channel(LOG_CHANNEL_ID)
+    if log_ch:
+        await log_ch.send(f"🗑️ Unverified {user.mention}.", allowed_mentions=allowed_mentions_users_only)
+    await interaction.response.send_message(f"Done. Removed Verified from {user.mention}.", ephemeral=True)
+
+# diagnostik — bağlantı durumu
+@tree.command(name="sheets_diag", description="Show Google Sheets connection status (mods only).")
+async def sheets_diag(interaction: discord.Interaction):
+    if not is_mod(interaction.user):
+        return await interaction.response.send_message("No permission.", ephemeral=True)
+
+    status = "✅ CONNECTED" if SHEETS_OK else "❌ DISABLED"
+    desc = (
+        f"Status: **{status}**\n"
+        f"Sheet ID: `{SHEET_ID or '-'}`\n"
+        f"Worksheet: `{WORKSHEET}`\n"
+        f"Service acct: `{SERVICE_EMAIL or '-'}`\n"
+    )
+    if not SHEETS_OK and SHEETS_WHY:
+        desc += f"\nReason: `{SHEETS_WHY}`"
+
+    desc += "\n\nRun `/sheets_test` to try appending a test row."
+    await interaction.response.send_message(desc, ephemeral=True)
+
+# test — tabloya satır at
+@tree.command(name="sheets_test", description="Append a test row to Google Sheet (mods only).")
+async def sheets_test(interaction: discord.Interaction):
+    if not is_mod(interaction.user):
+        return await interaction.response.send_message("No permission.", ephemeral=True)
+    try:
+        sheet_append_row(interaction.guild, interaction.user, "9"*ID_LENGTH, "test")
+        await interaction.response.send_message("Wrote a test row ✓", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"Failed: `{e}`", ephemeral=True)
+
+# ── RUN ──────────────────────────────────────────────────────────────────────
+client.run(TOKEN)
