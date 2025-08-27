@@ -1,7 +1,15 @@
-# main.py — Arcane Arena Verify Bot (panel + modal + help image + Sheets + diagnostics)
+# main.py — Arcane Arena Verify Bot (ENV-first panel text, modal, help image, Sheets)
 import os, re, json, base64, discord
 from discord import app_commands
 from datetime import datetime, timezone
+
+# ── Helpers for ENV text (accepts literal "\n") ──────────────────────────────
+def env_text(key: str, default: str) -> str:
+    val = os.getenv(key)
+    if not val or val.strip() == "":
+        return default
+    # Eğer değişkene tek satırda \n yazdıysan gerçek satır sonuna çevirir
+    return val.replace("\\n", "\n")
 
 # ── ENV / IDs ────────────────────────────────────────────────────────────────
 TOKEN               = os.getenv("DISCORD_TOKEN", "")
@@ -20,25 +28,27 @@ GUILD_ID    = int(os.getenv("GUILD_ID", "0"))
 SERVER_NAME = os.getenv("SERVER_NAME", "Arcane Arena")
 BRAND       = os.getenv("BRAND", "Arcane Arena")
 
-# Welcome panel text / visuals
-WELCOME_TITLE = os.getenv("WELCOME_TITLE", "Welcome to Arcane Arena!")
-WELCOME_DESC  = os.getenv(
+# Show author line on embeds?
+SHOW_AUTHOR = os.getenv("SHOW_AUTHOR", "false").lower() in ("1", "true", "yes")
+
+# Welcome panel text (only from ENV if set; otherwise fallback)
+WELCOME_TITLE = env_text("WELCOME_TITLE", "Welcome to Arcane Arena Official Discord Server")
+WELCOME_DESC  = env_text(
     "WELCOME_DESC",
-    "Arcane Arena — the most competitive tower defense experience.\n\n"
-    "To unlock the server, click **Verify** and enter your **Player ID** "
-    f"(exactly {{n}} digits).\n\n**Example:** `123456789`..."
-    "Your message will be private. If your DMs are closed, you may miss the confirmation."
-).format(n=ID_LENGTH)
+    (
+        "Arcane Arena — the most competitive tower defense experience.\n\n"
+        "To unlock the server, click **Verify** and enter your **Player ID** "
+        f"(exactly {ID_LENGTH} digits).\n\n**Example:** `123456789`\n\n"
+        "Your message will be private. If your DMs are closed, you may miss the confirmation."
+    ),
+)
 
-# Büyük görsel için iki yol: 1) repo içinden attachment 2) URL fallback
-WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")   # opsiyonel (fallback)
-ASSET_IMAGE_PATH  = os.getenv("ASSET_IMAGE_PATH", "assets/player_id_guide.png")  # repo içi dosya
-
-# Yardım butonu metin/görseli
+# Yardım butonu (ephemeral görsel)
 HELP_BUTTON_LABEL = os.getenv("HELP_BUTTON_LABEL", "Where is my Player ID?")
-HELP_TITLE        = os.getenv("HELP_TITLE", "Find your Player ID")
-HELP_DESC         = os.getenv("HELP_DESC", "Open the game → Profile → copy your Player ID and paste it here.")
+HELP_TITLE        = env_text("HELP_TITLE", "Find your Player ID")
+HELP_DESC         = env_text("HELP_DESC", "Open the game → Profile → copy your Player ID and paste it here.")
 HELP_IMAGE_URL    = os.getenv("HELP_IMAGE_URL", "")  # opsiyonel (fallback)
+ASSET_IMAGE_PATH  = os.getenv("ASSET_IMAGE_PATH", "assets/player_id_guide.png")  # repo içi dosya
 
 # Button & modal labels
 VERIFY_BUTTON_LABEL  = os.getenv("VERIFY_BUTTON_LABEL", "Verify")
@@ -154,7 +164,7 @@ else:
     SHEETS_WHY = "Missing SHEET_ID or credentials"
 
 def sheet_append_row(guild: discord.Guild, user: discord.abc.User, player_id: str, source: str):
-    """Sıra: Guild Name, User ID, Display Name, Player ID, Timestamp(UTC), Source"""
+    """Order: Guild Name, User ID, Display Name, Player ID, Timestamp(UTC), Source"""
     if not ws:
         raise RuntimeError(f"Sheets not configured: {SHEETS_WHY or 'unknown'}")
 
@@ -177,7 +187,7 @@ def sheet_append_row(guild: discord.Guild, user: discord.abc.User, player_id: st
 async def apply_success(guild: discord.Guild, member: discord.Member, player_id: str, source: str):
     log_ch = guild.get_channel(LOG_CHANNEL_ID)
 
-    # rol
+    # role
     vrole = guild.get_role(VERIFIED_ROLE_ID)
     if vrole and vrole not in member.roles:
         try:
@@ -207,7 +217,8 @@ async def apply_success(guild: discord.Guild, member: discord.Member, player_id:
     # DM
     try:
         emb = discord.Embed(description=DM_OK, color=COLOR_OK)
-        emb.set_author(name=f"{BRAND} Verify")
+        if SHOW_AUTHOR:
+            emb.set_author(name=f"{BRAND} Verify")
         emb.add_field(name="Player ID", value=f"`{player_id}`", inline=True)
         await member.send(embed=emb)
     except:
@@ -233,33 +244,44 @@ class VerifyPanelView(discord.ui.View):
             )
         await interaction.response.send_modal(VerifyModal())
 
-    @discord.ui.button(
+        @discord.ui.button(
         label=(HELP_BUTTON_LABEL or "Where is my Player ID?"),
         style=discord.ButtonStyle.secondary,
         custom_id="verify:help"
     )
     async def help_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Show an ephemeral embed with the Player ID guide image.
+           Priority: local file (ASSET_IMAGE_PATH) -> HELP_IMAGE_URL -> text-only.
+        """
         emb = discord.Embed(title=HELP_TITLE, description=HELP_DESC, color=COLOR_WARN)
 
-        # Önce repo içi dosyayı dene; yoksa URL fallback
-        file = None
-        if os.path.exists(ASSET_IMAGE_PATH):
-            fname = os.path.basename(ASSET_IMAGE_PATH)
-            file = discord.File(ASSET_IMAGE_PATH, filename=fname)
-            emb.set_image(url=f"attachment://{fname}")
-            await interaction.response.send_message(embed=emb, ephemeral=True, file=file)
-        else:
-            if HELP_IMAGE_URL:
-                emb.set_image(url=HELP_IMAGE_URL)
-            await interaction.response.send_message(embed=emb, ephemeral=True)
+        # 1) Repo içindeki dosya (attachment olarak)
+        path = os.getenv("ASSET_IMAGE_PATH", ASSET_IMAGE_PATH)
+        if path and os.path.isfile(path):
+            try:
+                fname = os.path.basename(path)
+                file = discord.File(path, filename=fname)
+                emb.set_image(url=f"attachment://{fname}")
+                return await interaction.response.send_message(embed=emb, ephemeral=True, file=file)
+            except Exception as e:
+                # dosya var ama okunamadıysa URL'ye düş
+                pass
 
-class VerifyModal(discord.ui.Modal, title=MODAL_TITLE):
-    player_id_input: discord.ui.TextInput = discord.ui.TextInput(
-        label=MODAL_FIELD_LABEL,
-        placeholder="e.g. 123456789",
-        style=discord.TextStyle.short,
-        required=True,
-        max_length=32,
+        # 2) URL fallback
+        url = os.getenv("HELP_IMAGE_URL", HELP_IMAGE_URL)
+        if url:
+            emb.set_image(url=url)
+            return await interaction.response.send_message(embed=emb, ephemeral=True)
+
+        # 3) Görsel yoksa düz metin
+        warn = (
+            "⚠️ No help image configured.\n\n"
+            "• Set **ASSET_IMAGE_PATH** to an existing file in the repo (e.g. `assets/player_id_guide.png`),\n"
+            "  **or** set **HELP_IMAGE_URL** to a direct image URL.\n\n"
+            "Tip: Raw GitHub URL örneği:\n"
+            "`https://raw.githubusercontent.com/<user>/<repo>/<branch>/assets/player_id_guide.png`"
+        )
+        await interaction.response.send_message(warn, ephemeral=True)
     )
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -272,6 +294,23 @@ class VerifyModal(discord.ui.Modal, title=MODAL_TITLE):
                 ephemeral=True
             )
 
+@tree.command(name="assets_diag", description="Show help image settings (mods only).")
+async def assets_diag(interaction: discord.Interaction):
+    if not is_mod(interaction.user):
+        return await interaction.response.send_message("No permission.", ephemeral=True)
+
+    path = os.getenv("ASSET_IMAGE_PATH", ASSET_IMAGE_PATH)
+    url  = os.getenv("HELP_IMAGE_URL", HELP_IMAGE_URL)
+    exists = os.path.isfile(path) if path else False
+
+    msg = (
+        f"**ASSET_IMAGE_PATH**: `{path or '-'}`\n"
+        f"• exists: `{exists}`\n\n"
+        f"**HELP_IMAGE_URL**: `{url or '-'}`\n"
+        f"• will_use: `{'file' if exists else ('url' if url else 'none')}`\n"
+    )
+    await interaction.response.send_message(msg, ephemeral=True)
+    
         digits = raw
         view = ConfirmView(player_id=digits)
         emb = discord.Embed(
@@ -384,19 +423,12 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
         )
 
     emb = discord.Embed(title=WELCOME_TITLE, description=WELCOME_DESC, color=COLOR_WARN)
-    # emb.set_author(name=f"{BRAND} Verify")  # İSTEMİYORSAN KAPALI KALSIN
+    if SHOW_AUTHOR:
+        emb.set_author(name=f"{BRAND} Verify")
 
-    # Görsel: önce repo'daki dosya, yoksa URL fallback
-    file = None
-    if os.path.exists(ASSET_IMAGE_PATH):
-        fname = os.path.basename(ASSET_IMAGE_PATH)
-        file = discord.File(ASSET_IMAGE_PATH, filename=fname)
-        emb.set_image(url=f"attachment://{fname}")
-    elif WELCOME_IMAGE_URL:
-        emb.set_image(url=WELCOME_IMAGE_URL)
-
+    # Panelde görsel YOK (görsel yalnız help butonunda gösterilir)
     try:
-        await target.send(embed=emb, view=VerifyPanelView(), file=file)
+        await target.send(embed=emb, view=VerifyPanelView())
         await interaction.response.send_message("Panel posted.", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"Failed: `{e}`", ephemeral=True)
