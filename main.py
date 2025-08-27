@@ -26,7 +26,7 @@ WELCOME_DESC  = os.getenv(
     "WELCOME_DESC",
     "Arcane Arena — the most competitive tower defense experience.\n\n"
     "To unlock the server, click **Verify** and enter your **Player ID** "
-    f"(exactly {{n}} digits).\n\n"
+    f"(exactly {{n}} digits).\n\n**Example:** `123456789`..."
     "Your message will be private. If your DMs are closed, you may miss the confirmation."
 ).format(n=ID_LENGTH)
 
@@ -382,8 +382,9 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
             ephemeral=True
         )
 
-    emb = discord.Embed(title=WELCOME_TITLE, description=WELCOME_DESC, color=COLOR_WARN)
-    emb.set_author(name=f"{BRAND} Verify")
+   emb = discord.Embed(title=WELCOME_TITLE, description=WELCOME_DESC, color=COLOR_WARN)
+# emb.set_author(name=f"{BRAND} Verify")
+
 
     # Görsel: önce repo dosyası, yoksa URL
     file = None
