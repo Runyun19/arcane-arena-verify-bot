@@ -327,11 +327,7 @@ class ConfirmView(discord.ui.View):
         super().__init__(timeout=60)
         self.player_id = player_id
 
-    @discord.ui.button(label=CANCEL_LABEL, style=discord.ButtonStyle.secondary)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="❎ Cancelled.", embed=None, view=None)
-
-    @discord.ui.button(label=CONFIRM_LABEL, style=discord.ButtonStyle.success)
+    @discord.ui.button(label=CONFIRM_LABEL, style=discord.ButtonStyle.success, row=0)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
         member = interaction.user
         guild  = interaction.guild
@@ -343,6 +339,10 @@ class ConfirmView(discord.ui.View):
             )
         await apply_success(guild, member, self.player_id, source="panel")
         await interaction.response.edit_message(content="✅ Verified!", embed=None, view=None)
+
+    @discord.ui.button(label=CANCEL_LABEL, style=discord.ButtonStyle.secondary, row=0)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.edit_message(content="❎ Cancelled.", embed=None, view=None)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Events
