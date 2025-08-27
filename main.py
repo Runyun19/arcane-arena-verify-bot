@@ -144,16 +144,20 @@ def sheet_append_row(guild: discord.Guild, user: discord.abc.User, player_id: st
     if not ws:
         raise RuntimeError(f"Sheets not configured: {SHEETS_WHY or 'unknown'}")
 
-   ts = datetime.now(timezone.utc).isoformat()
-    display = getattr(user, "global_name", None) or getattr(user, "display_name", None) or user.name
+    ts = datetime.now(timezone.utc).isoformat()
+    display = (
+        getattr(user, "global_name", None)
+        or getattr(user, "display_name", None)
+        or user.name
+    )
 
     row = [
-        guild.name,        # Guild Name
-        str(user.id),      # User ID
-        display,           # Display Name
-        player_id,         # Player ID
-        ts,                # Timestamp (UTC ISO)
-        source,            # Source: panel | auto | manual | test
+        guild.name,      # Guild Name
+        str(user.id),    # User ID
+        display,         # Display Name
+        player_id,       # Player ID
+        ts,              # Timestamp (UTC)
+        source,          # panel | auto | manual | test
     ]
 
     ws.append_row(row, value_input_option="RAW")
