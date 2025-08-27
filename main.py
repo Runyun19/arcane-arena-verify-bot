@@ -1,7 +1,7 @@
 # main.py — Verify Bot (Panel + Modal + Confirm, Mods, Sheets, strict N-digit + diagnostics)
 import os, re, json, base64, discord
 from discord import app_commands
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ── ENV / IDs ────────────────────────────────────────────────────────────────
 TOKEN               = os.getenv("DISCORD_TOKEN", "")
@@ -144,7 +144,7 @@ def sheet_append_row(guild: discord.Guild, user: discord.abc.User, player_id: st
     if not ws:
         raise RuntimeError(f"Sheets not configured: {SHEETS_WHY or 'unknown'}")
 
-    ts = datetime.utcnow().isoformat()
+   ts = datetime.now(timezone.utc).isoformat()
     display = getattr(user, "global_name", None) or getattr(user, "display_name", None) or user.name
 
     row = [
