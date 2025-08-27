@@ -1,4 +1,4 @@
-# main.py — Verify Bot (Panel + Modal + Confirm, Mods, Sheets, strict N-digit + diagnostics)
+# main.py — Arcane Arena Verify Bot (panel + modal + confirm + Sheets + diagnostics)
 import os, re, json, base64, discord
 from discord import app_commands
 from datetime import datetime, timezone
@@ -11,11 +11,11 @@ LOG_CHANNEL_ID      = int(os.getenv("LOG_CHANNEL_ID", "0"))        # #player-id-
 VERIFIED_ROLE_ID    = int(os.getenv("VERIFIED_ROLE_ID", "0"))      # Verified role
 
 # Moderation / permissions
-MOD_ROLE_ID   = int(os.getenv("MOD_ROLE_ID", "0"))                 # optional role allowed to use commands
-AUTO_REGISTER = os.getenv("AUTO_REGISTER", "false").lower() in ("1", "true", "yes")  # default: panel kullan
+MOD_ROLE_ID   = int(os.getenv("MOD_ROLE_ID", "0"))                 # optional
+AUTO_REGISTER = os.getenv("AUTO_REGISTER", "false").lower() in ("1", "true", "yes")
 ID_LENGTH     = int(os.getenv("ID_LENGTH", "9"))
 
-# Branding / jump links
+# Branding / links
 GUILD_ID    = int(os.getenv("GUILD_ID", "0"))
 SERVER_NAME = os.getenv("SERVER_NAME", "Arcane Arena")
 BRAND       = os.getenv("BRAND", "Arcane Arena")
@@ -29,8 +29,8 @@ WELCOME_DESC  = os.getenv(
     f"(exactly {{n}} digits). Example: {'9'*9}\n\n"
     "Your message will be private. If your DMs are closed, you may miss the confirmation."
 ).format(n=ID_LENGTH)
-WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")   # embed.set_image
-WELCOME_THUMB_URL = os.getenv("WELCOME_THUMB_URL", "")   # embed.set_thumbnail
+WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")
+WELCOME_THUMB_URL = os.getenv("WELCOME_THUMB_URL", "")
 
 # Button & modal labels
 VERIFY_BUTTON_LABEL  = os.getenv("VERIFY_BUTTON_LABEL", "Verify")
@@ -45,16 +45,15 @@ WORKSHEET              = os.getenv("WORKSHEET", "Registrations")
 GOOGLE_CREDENTIALS     = os.getenv("GOOGLE_CREDENTIALS", "")
 GOOGLE_CREDENTIALS_B64 = os.getenv("GOOGLE_CREDENTIALS_B64", "")
 
-# Community managers contact (already-verified yönlendirme)
+# Community managers contact
 CM_ROLE_ID      = int(os.getenv("CM_ROLE_ID", "0"))
 SUPPORT_USER_ID = os.getenv("SUPPORT_USER_ID", "0")
 
 # ── VALIDATION ───────────────────────────────────────────────────────────────
-# ham girdi tam olarak yalnızca {ID_LENGTH} adet rakam olmalı (harf/boşluk yok)
+# tam olarak N rakam: harf/boşluk yok
 EXACT_ASCII_DIGITS_RAW = re.compile(rf"^\d{{{ID_LENGTH}}}$")
 
 # ── TEXTS (EN) ───────────────────────────────────────────────────────────────
-CHANNEL_MENTION_TEXT = f"<#{REGISTER_CHANNEL_ID}>"
 REGISTER_JUMP = (
     f"https://discord.com/channels/{GUILD_ID}/{REGISTER_CHANNEL_ID}" if GUILD_ID else "#welcome"
 )
@@ -109,9 +108,9 @@ SERVICE_EMAIL = ""
 if SHEET_ID and (GOOGLE_CREDENTIALS_B64 or GOOGLE_CREDENTIALS):
     try:
         import gspread
+        from gspread.exceptions import SpreadsheetNotFound
         from google.oauth2.service_account import Credentials
 
-        # Base64 verilmişse onu tercih et; yoksa raw JSON'u kullan
         creds_raw = GOOGLE_CREDENTIALS
         if GOOGLE_CREDENTIALS_B64:
             creds_raw = base64.b64decode(GOOGLE_CREDENTIALS_B64).decode("utf-8")
@@ -125,7 +124,14 @@ if SHEET_ID and (GOOGLE_CREDENTIALS_B64 or GOOGLE_CREDENTIALS):
         ]
         creds = Credentials.from_service_account_info(info, scopes=scopes)
         gc = gspread.authorize(creds)
-        sh = gc.open_by_key(SHEET_ID)
+
+        try:
+            sh = gc.open_by_key(SHEET_ID)
+        except SpreadsheetNotFound:
+            raise RuntimeError(
+                f"Spreadsheet not found. Wrong SHEET_ID or not shared with {SERVICE_EMAIL}."
+            )
+
         try:
             ws = sh.worksheet(WORKSHEET)
         except Exception:
@@ -140,7 +146,7 @@ else:
     SHEETS_WHY = "Missing SHEET_ID or credentials"
 
 def sheet_append_row(guild: discord.Guild, user: discord.abc.User, player_id: str, source: str):
-    """Sheet'e şu sırayla yazar: Guild Name, User ID, Display Name, Player ID, Timestamp, Source"""
+    """Sıra: Guild Name, User ID, Display Name, Player ID, Timestamp(UTC), Source"""
     if not ws:
         raise RuntimeError(f"Sheets not configured: {SHEETS_WHY or 'unknown'}")
 
@@ -150,7 +156,6 @@ def sheet_append_row(guild: discord.Guild, user: discord.abc.User, player_id: st
         or getattr(user, "display_name", None)
         or user.name
     )
-
     row = [
         guild.name,      # Guild Name
         str(user.id),    # User ID
@@ -159,10 +164,7 @@ def sheet_append_row(guild: discord.Guild, user: discord.abc.User, player_id: st
         ts,              # Timestamp (UTC)
         source,          # panel | auto | manual | test
     ]
-
     ws.append_row(row, value_input_option="RAW")
-
-    )
 
 async def apply_success(guild: discord.Guild, member: discord.Member, player_id: str, source: str):
     log_ch = guild.get_channel(LOG_CHANNEL_ID)
@@ -179,7 +181,7 @@ async def apply_success(guild: discord.Guild, member: discord.Member, player_id:
                     allowed_mentions=allowed_mentions_users_only
                 )
 
-    # sheets: hatayı LOG KANALINA da yaz
+    # sheets
     try:
         sheet_append_row(guild, member, player_id, source)
         if log_ch:
@@ -193,7 +195,6 @@ async def apply_success(guild: discord.Guild, member: discord.Member, player_id:
                 f"⚠️ Sheet write failed for {member.mention}: `{e}`",
                 allowed_mentions=allowed_mentions_users_only
             )
-        print("⚠️ sheet append failed:", e)
 
     # DM
     try:
@@ -236,14 +237,14 @@ class VerifyModal(discord.ui.Modal, title=MODAL_TITLE):
     async def on_submit(self, interaction: discord.Interaction):
         raw = str(self.player_id_input.value).strip()
 
-        # strict: tam olarak N (ID_LENGTH) rakam olmalı
+        # strict: tam olarak N rakam
         if not EXACT_ASCII_DIGITS_RAW.fullmatch(raw):
             return await interaction.response.send_message(
                 MSG_INVALID.format(mention=interaction.user.mention, need=ID_LENGTH),
                 ephemeral=True
             )
 
-        digits = raw  # fullmatch geçti; güvenli
+        digits = raw
         view = ConfirmView(player_id=digits)
         emb = discord.Embed(
             title="Confirm your Player ID",
@@ -291,7 +292,7 @@ async def on_message(message: discord.Message):
             pass
         return
 
-    # Auto-register modu açıksa (#welcome’a yazınca)
+    # Auto-register modu (#welcome'a doğrudan yazma)
     if not AUTO_REGISTER:
         return
     if message.author.bot or message.channel.id != REGISTER_CHANNEL_ID:
@@ -334,7 +335,6 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
         return await interaction.response.send_message("You don’t have permission.", ephemeral=True)
     target = channel or interaction.channel
 
-    # izin kontrolü — eksikleri ephemeralde bildir
     me = interaction.guild.me
     perms = target.permissions_for(me)
     needed = {
@@ -403,7 +403,6 @@ async def unverify_cmd(interaction: discord.Interaction, user: discord.Member):
         await log_ch.send(f"🗑️ Unverified {user.mention}.", allowed_mentions=allowed_mentions_users_only)
     await interaction.response.send_message(f"Done. Removed Verified from {user.mention}.", ephemeral=True)
 
-# diagnostik — bağlantı durumu
 @tree.command(name="sheets_diag", description="Show Google Sheets connection status (mods only).")
 async def sheets_diag(interaction: discord.Interaction):
     if not is_mod(interaction.user):
@@ -418,11 +417,9 @@ async def sheets_diag(interaction: discord.Interaction):
     )
     if not SHEETS_OK and SHEETS_WHY:
         desc += f"\nReason: `{SHEETS_WHY}`"
-
     desc += "\n\nRun `/sheets_test` to try appending a test row."
     await interaction.response.send_message(desc, ephemeral=True)
 
-# test — tabloya satır at
 @tree.command(name="sheets_test", description="Append a test row to Google Sheet (mods only).")
 async def sheets_test(interaction: discord.Interaction):
     if not is_mod(interaction.user):
