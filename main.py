@@ -1,4 +1,4 @@
-# main.py — Arcane Arena Verify Bot (panel + modal + confirm + Sheets + diagnostics)
+# main.py — Arcane Arena Verify Bot (panel + modal + help image + Sheets + diagnostics)
 import os, re, json, base64, discord
 from discord import app_commands
 from datetime import datetime, timezone
@@ -6,12 +6,12 @@ from datetime import datetime, timezone
 # ── ENV / IDs ────────────────────────────────────────────────────────────────
 TOKEN               = os.getenv("DISCORD_TOKEN", "")
 
-REGISTER_CHANNEL_ID = int(os.getenv("REGISTER_CHANNEL_ID", "0"))   # #welcome
-LOG_CHANNEL_ID      = int(os.getenv("LOG_CHANNEL_ID", "0"))        # #player-id-log
-VERIFIED_ROLE_ID    = int(os.getenv("VERIFIED_ROLE_ID", "0"))      # Verified role
+REGISTER_CHANNEL_ID = int(os.getenv("REGISTER_CHANNEL_ID", "0"))   # #welcome channel id
+LOG_CHANNEL_ID      = int(os.getenv("LOG_CHANNEL_ID", "0"))        # #player-id-log channel id
+VERIFIED_ROLE_ID    = int(os.getenv("VERIFIED_ROLE_ID", "0"))      # Verified role id
 
 # Moderation / permissions
-MOD_ROLE_ID   = int(os.getenv("MOD_ROLE_ID", "0"))                 # optional
+MOD_ROLE_ID   = int(os.getenv("MOD_ROLE_ID", "0"))                 # optional mod role id
 AUTO_REGISTER = os.getenv("AUTO_REGISTER", "false").lower() in ("1", "true", "yes")
 ID_LENGTH     = int(os.getenv("ID_LENGTH", "9"))
 
@@ -26,11 +26,19 @@ WELCOME_DESC  = os.getenv(
     "WELCOME_DESC",
     "Arcane Arena — the most competitive tower defense experience.\n\n"
     "To unlock the server, click **Verify** and enter your **Player ID** "
-    f"(exactly {{n}} digits). Example: {'9'*9}\n\n"
+    f"(exactly {{n}} digits).\n\n"
     "Your message will be private. If your DMs are closed, you may miss the confirmation."
 ).format(n=ID_LENGTH)
-WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")
-WELCOME_THUMB_URL = os.getenv("WELCOME_THUMB_URL", "")
+
+# Büyük görsel için iki yol: 1) repo içinden attachment 2) URL fallback
+WELCOME_IMAGE_URL = os.getenv("WELCOME_IMAGE_URL", "")   # opsiyonel (fallback)
+ASSET_IMAGE_PATH  = os.getenv("ASSET_IMAGE_PATH", "assets/player_id_guide.png")  # repo içi dosya
+
+# Yardım butonu metin/görseli
+HELP_BUTTON_LABEL = os.getenv("HELP_BUTTON_LABEL", "Where is my Player ID?")
+HELP_TITLE        = os.getenv("HELP_TITLE", "Find your Player ID")
+HELP_DESC         = os.getenv("HELP_DESC", "Open the game → Profile → copy your Player ID and paste it here.")
+HELP_IMAGE_URL    = os.getenv("HELP_IMAGE_URL", "")  # opsiyonel (fallback)
 
 # Button & modal labels
 VERIFY_BUTTON_LABEL  = os.getenv("VERIFY_BUTTON_LABEL", "Verify")
@@ -39,18 +47,18 @@ MODAL_FIELD_LABEL    = os.getenv("MODAL_FIELD_LABEL", f"Player ID (exactly {ID_L
 CONFIRM_LABEL        = os.getenv("CONFIRM_LABEL", "Confirm")
 CANCEL_LABEL         = os.getenv("CANCEL_LABEL", "Cancel")
 
-# Google Sheets (raw JSON or base64)
+# Google Sheets (raw JSON veya base64)
 SHEET_ID               = os.getenv("SHEET_ID", "")
 WORKSHEET              = os.getenv("WORKSHEET", "Registrations")
 GOOGLE_CREDENTIALS     = os.getenv("GOOGLE_CREDENTIALS", "")
 GOOGLE_CREDENTIALS_B64 = os.getenv("GOOGLE_CREDENTIALS_B64", "")
 
-# Community managers contact
+# Community managers contact (already-verified yönlendirme)
 CM_ROLE_ID      = int(os.getenv("CM_ROLE_ID", "0"))
 SUPPORT_USER_ID = os.getenv("SUPPORT_USER_ID", "0")
 
 # ── VALIDATION ───────────────────────────────────────────────────────────────
-# tam olarak N rakam: harf/boşluk yok
+# tam olarak N rakam (harf/boşluk yok)
 EXACT_ASCII_DIGITS_RAW = re.compile(rf"^\d{{{ID_LENGTH}}}$")
 
 # ── TEXTS (EN) ───────────────────────────────────────────────────────────────
@@ -225,6 +233,26 @@ class VerifyPanelView(discord.ui.View):
             )
         await interaction.response.send_modal(VerifyModal())
 
+    @discord.ui.button(
+        label=(HELP_BUTTON_LABEL or "Where is my Player ID?"),
+        style=discord.ButtonStyle.secondary,
+        custom_id="verify:help"
+    )
+    async def help_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        emb = discord.Embed(title=HELP_TITLE, description=HELP_DESC, color=COLOR_WARN)
+
+        # Önce repo içi dosyayı dene; yoksa URL fallback
+        file = None
+        if os.path.exists(ASSET_IMAGE_PATH):
+            fname = os.path.basename(ASSET_IMAGE_PATH)
+            file = discord.File(ASSET_IMAGE_PATH, filename=fname)
+            emb.set_image(url=f"attachment://{fname}")
+            await interaction.response.send_message(embed=emb, ephemeral=True, file=file)
+        else:
+            if HELP_IMAGE_URL:
+                emb.set_image(url=HELP_IMAGE_URL)
+            await interaction.response.send_message(embed=emb, ephemeral=True)
+
 class VerifyModal(discord.ui.Modal, title=MODAL_TITLE):
     player_id_input: discord.ui.TextInput = discord.ui.TextInput(
         label=MODAL_FIELD_LABEL,
@@ -335,6 +363,7 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
         return await interaction.response.send_message("You don’t have permission.", ephemeral=True)
     target = channel or interaction.channel
 
+    # Bot izin kontrolü
     me = interaction.guild.me
     perms = target.permissions_for(me)
     needed = {
@@ -343,6 +372,7 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
         "embed_links": "Embed Links",
         "read_message_history": "Read Message History",
         "use_application_commands": "Use Application Commands",
+        "attach_files": "Attach Files",
     }
     missing = [label for attr, label in needed.items() if not getattr(perms, attr, False)]
     if missing:
@@ -354,13 +384,18 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
 
     emb = discord.Embed(title=WELCOME_TITLE, description=WELCOME_DESC, color=COLOR_WARN)
     emb.set_author(name=f"{BRAND} Verify")
-    if WELCOME_IMAGE_URL:
+
+    # Görsel: önce repo dosyası, yoksa URL
+    file = None
+    if os.path.exists(ASSET_IMAGE_PATH):
+        fname = os.path.basename(ASSET_IMAGE_PATH)
+        file = discord.File(ASSET_IMAGE_PATH, filename=fname)
+        emb.set_image(url=f"attachment://{fname}")
+    elif WELCOME_IMAGE_URL:
         emb.set_image(url=WELCOME_IMAGE_URL)
-    if WELCOME_THUMB_URL:
-        emb.set_thumbnail(url=WELCOME_THUMB_URL)
 
     try:
-        await target.send(embed=emb, view=VerifyPanelView())
+        await target.send(embed=emb, view=VerifyPanelView(), file=file)
         await interaction.response.send_message("Panel posted.", ephemeral=True)
     except Exception as e:
         await interaction.response.send_message(f"Failed: `{e}`", ephemeral=True)
