@@ -329,20 +329,31 @@ class ConfirmView(discord.ui.View):
 
     @discord.ui.button(label=CONFIRM_LABEL, style=discord.ButtonStyle.success, row=0)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        # 1) Hemen ACK (kullanıcı 'Interaction failed' görmesin)
+        await interaction.response.defer(ephemeral=True)
+
         member = interaction.user
         guild  = interaction.guild
+
         vrole = guild.get_role(VERIFIED_ROLE_ID)
         if vrole and vrole in member.roles:
-            return await interaction.response.edit_message(
+            # 2) Orijinal ephemeral’ı düzenle (response.edit_message yerine)
+            return await interaction.edit_original_response(
                 content=MSG_ALREADY_VERIFIED.format(mention=member.mention, cm=cm_contact()),
                 embed=None, view=None
             )
+
+        # Uzun sürebilecek işler (rol, sheets, DM) artık güvenle yapılabilir
         await apply_success(guild, member, self.player_id, source="panel")
-        await interaction.response.edit_message(content="✅ Verified!", embed=None, view=None)
+
+        # 3) Bitti mesajı
+        await interaction.edit_original_response(content="✅ Verified!", embed=None, view=None)
 
     @discord.ui.button(label=CANCEL_LABEL, style=discord.ButtonStyle.secondary, row=0)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.edit_message(content="❎ Cancelled.", embed=None, view=None)
+        # Yine önce ACK gönder
+        await interaction.response.defer(ephemeral=True)
+        await interaction.edit_original_response(content="❎ Cancelled.", embed=None, view=None)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Events
