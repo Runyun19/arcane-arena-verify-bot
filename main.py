@@ -1,6 +1,7 @@
 # main.py — Arcane Arena Verify Bot
 # - Panel metni ENV'den (WELCOME_TITLE / WELCOME_DESC)
 # - Help butonunda görsel: önce repo dosyası (ASSET_IMAGE_PATH) -> yoksa HELP_IMAGE_URL
+# - Üstte büyük karşılama görseli: BANNER_IMAGE_PATH -> yoksa BANNER_IMAGE_URL (yeni)
 # - Sıkı 9 haneli (ID_LENGTH) doğrulama
 # - Google Sheets'e yazma (SHEET_ID + credentials)
 # - Mod-only komutlar: /setup_panel, /verify, /unverify, /sheets_diag, /sheets_test, /assets_diag
@@ -43,11 +44,10 @@ BRAND       = os.getenv("BRAND", "Arcane Arena")
 SHOW_AUTHOR = os.getenv("SHOW_AUTHOR", "false").lower() in ("1", "true", "yes")
 
 # Panel text (tamamen ENV'den; boş ise fallback)
-WELCOME_TITLE = env_text("WELCOME_TITLE", "Welcome to Arcane Arena Official Discord Server")
+WELCOME_TITLE = env_text("WELCOME_TITLE", "The most competitive tower defense experience.")
 WELCOME_DESC  = env_text(
     "WELCOME_DESC",
     (
-        "Arcane Arena — the most competitive tower defense experience.\n\n"
         "To unlock the server, click **Verify** and enter your **Player ID** "
         f"(exactly {ID_LENGTH} digits).\n\n**Example:** `123456789`\n\n"
         "Your message will be private. If your DMs are closed, you may miss the confirmation."
@@ -60,6 +60,10 @@ HELP_TITLE        = env_text("HELP_TITLE", "Find your Player ID")
 HELP_DESC         = env_text("HELP_DESC", "Open the game → Profile → copy your Player ID and paste it here.")
 HELP_IMAGE_URL    = os.getenv("HELP_IMAGE_URL", "")  # fallback URL
 ASSET_IMAGE_PATH  = os.getenv("ASSET_IMAGE_PATH", "assets/player_id_guide.png")  # repo içi dosya
+
+# NEW: Üstte büyük karşılama görseli
+BANNER_IMAGE_PATH = os.getenv("BANNER_IMAGE_PATH", "assets/welcome_banner.png")
+BANNER_IMAGE_URL  = os.getenv("BANNER_IMAGE_URL", "")
 
 # Modal / buttons
 VERIFY_BUTTON_LABEL = os.getenv("VERIFY_BUTTON_LABEL", "Verify")
@@ -337,7 +341,7 @@ class ConfirmView(discord.ui.View):
 
         vrole = guild.get_role(VERIFIED_ROLE_ID)
         if vrole and vrole in member.roles:
-            # 2) Orijinal ephemeral’ı düzenle (response.edit_message yerine)
+            # 2) Orijinal ephemeral’ı düzenle
             return await interaction.edit_original_response(
                 content=MSG_ALREADY_VERIFIED.format(mention=member.mention, cm=cm_contact()),
                 embed=None, view=None
@@ -435,6 +439,23 @@ async def setup_panel_cmd(interaction: discord.Interaction, channel: discord.Tex
             ephemeral=True
         )
 
+    # NEW: 1) Üstte büyük karşılama görselini gönder
+    banner_path = os.getenv("BANNER_IMAGE_PATH", BANNER_IMAGE_PATH)
+    banner_url  = os.getenv("BANNER_IMAGE_URL", BANNER_IMAGE_URL)
+    try:
+        if banner_path and os.path.isfile(banner_path):
+            fname = os.path.basename(banner_path)
+            file = discord.File(banner_path, filename=fname)
+            await target.send(file=file)  # yalnızca görsel
+        elif banner_url:
+            e = discord.Embed(color=COLOR_WARN)
+            e.set_image(url=banner_url)
+            await target.send(embed=e)   # URL ile görsel
+    except Exception as e:
+        # banner gönderilemese de panel gönderilmeye devam etsin
+        await target.send(f"⚠️ Banner image failed: `{e}`")
+
+    # 2) Hemen altına verify panelini gönder
     emb = discord.Embed(title=WELCOME_TITLE, description=WELCOME_DESC, color=COLOR_WARN)
     if SHOW_AUTHOR:
         emb.set_author(name=f"{BRAND} Verify")
@@ -510,20 +531,28 @@ async def sheets_test(interaction: discord.Interaction):
     except Exception as e:
         await interaction.response.send_message(f"Failed: `{e}`", ephemeral=True)
 
-@tree.command(name="assets_diag", description="Show help image settings (mods only).")
+@tree.command(name="assets_diag", description="Show help/banner image settings (mods only).")
 async def assets_diag(interaction: discord.Interaction):
     if not is_mod(interaction.user):
         return await interaction.response.send_message("No permission.", ephemeral=True)
 
-    path = os.getenv("ASSET_IMAGE_PATH", ASSET_IMAGE_PATH)
-    url  = os.getenv("HELP_IMAGE_URL", HELP_IMAGE_URL)
-    exists = os.path.isfile(path) if path else False
+    help_path = os.getenv("ASSET_IMAGE_PATH", ASSET_IMAGE_PATH)
+    help_url  = os.getenv("HELP_IMAGE_URL", HELP_IMAGE_URL)
+    help_exists = os.path.isfile(help_path) if help_path else False
+
+    banner_path = os.getenv("BANNER_IMAGE_PATH", BANNER_IMAGE_PATH)
+    banner_url  = os.getenv("BANNER_IMAGE_URL", BANNER_IMAGE_URL)
+    banner_exists = os.path.isfile(banner_path) if banner_path else False
 
     msg = (
-        f"**ASSET_IMAGE_PATH**: `{path or '-'}`\n"
-        f"• exists: `{exists}`\n\n"
-        f"**HELP_IMAGE_URL**: `{url or '-'}`\n"
-        f"• will_use: `{'file' if exists else ('url' if url else 'none')}`\n"
+        "**HELP IMAGE**\n"
+        f"• ASSET_IMAGE_PATH: `{help_path or '-'}` (exists: `{help_exists}`)\n"
+        f"• HELP_IMAGE_URL : `{help_url or '-'}`\n"
+        f"• will_use       : `{'file' if help_exists else ('url' if help_url else 'none')}`\n\n"
+        "**BANNER IMAGE**\n"
+        f"• BANNER_IMAGE_PATH: `{banner_path or '-'}` (exists: `{banner_exists}`)\n"
+        f"• BANNER_IMAGE_URL : `{banner_url or '-'}`\n"
+        f"• will_use         : `{'file' if banner_exists else ('url' if banner_url else 'none')}`\n"
     )
     await interaction.response.send_message(msg, ephemeral=True)
 
