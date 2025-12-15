@@ -1,10 +1,6 @@
-# main.py — Arcane Arena Verify Bot
-# - Panel metni ENV'den (WELCOME_TITLE / WELCOME_DESC)
-# - Help butonunda görsel: önce repo dosyası (ASSET_IMAGE_PATH) -> yoksa HELP_IMAGE_URL
-# - Üstte büyük karşılama görseli: BANNER_IMAGE_PATH -> yoksa BANNER_IMAGE_URL (yeni)
-# - Sıkı 9 haneli (ID_LENGTH) doğrulama
-# - Google Sheets'e yazma (SHEET_ID + credentials)
-# - Mod-only komutlar: /setup_panel, /verify, /unverify, /sheets_diag, /sheets_test, /assets_diag
+# main.py — Arcane Arena Verify Bot + Mirror Feature
+# - Verification: Panel, Modal, Google Sheets (Orijinal Kod Korundu)
+# - Mirror: Raid Rush'taki gibi Shop/Duyuru mesajlarını kopyalar (YENİ EKLENDİ)
 
 import os
 import re
@@ -42,6 +38,14 @@ SERVER_NAME = os.getenv("SERVER_NAME", "Arcane Arena")
 BRAND       = os.getenv("BRAND", "Arcane Arena")
 
 SHOW_AUTHOR = os.getenv("SHOW_AUTHOR", "false").lower() in ("1", "true", "yes")
+
+# 🟢 [YENİ EKLENDİ] MIRROR SETTINGS (Raid Rush'tan Transfer Edildi)
+MIRROR_TARGET_CHANNEL_ID  = int(os.getenv("MIRROR_TARGET_CHANNEL_ID", "0"))
+COMMUNITY_MANAGER_ROLE_ID = int(os.getenv("COMMUNITY_MANAGER_ROLE_ID", "0"))
+# Hangi botların mesajı kopyalanacak? (Virgülle ayrılmış ID'ler)
+MIRROR_BOT_USER_IDS = {
+    int(x) for x in os.getenv("MIRROR_BOT_USER_IDS", "").replace(" ", "").split(",") if x.isdigit()
+}
 
 # Panel text (tamamen ENV'den; boş ise fallback)
 WELCOME_TITLE = env_text("WELCOME_TITLE", "The most competitive tower defense experience.")
@@ -85,6 +89,7 @@ SUPPORT_USER_ID = os.getenv("SUPPORT_USER_ID", "0")
 # ─────────────────────────────────────────────────────────────────────────────
 # Validation
 EXACT_ASCII_DIGITS_RAW = re.compile(rf"^\d{{{ID_LENGTH}}}$")
+_mirrored_ids: set[int] = set() # 🟢 [YENİ] Mirror takibi için
 
 # Metinler
 REGISTER_JUMP = (
@@ -369,7 +374,52 @@ async def on_ready():
 
 @client.event
 async def on_message(message: discord.Message):
-    # DMs -> yönlendir
+    # 🟢 [YENİ BÖLÜM BAŞLANGICI] - MIRROR LOGIC
+    # Raid Rush botundan alınan mesaj kopyalama mantığı buraya eklendi.
+    if message.author.bot:
+        if (MIRROR_TARGET_CHANNEL_ID and 
+            COMMUNITY_MANAGER_ROLE_ID and 
+            len(MIRROR_BOT_USER_IDS) > 0 and 
+            message.guild):
+            
+            # Gönderen bot izin verilenler listesinde mi?
+            if message.author.id in MIRROR_BOT_USER_IDS:
+                # Daha önce kopyalandı mı?
+                if message.id in _mirrored_ids: return
+
+                # Mesajda Community Manager rolü etiketlenmiş mi?
+                role_mention = f"<@&{COMMUNITY_MANAGER_ROLE_ID}>"
+                content = message.content or ""
+                has_role = role_mention in content or any(r.id == COMMUNITY_MANAGER_ROLE_ID for r in message.role_mentions)
+                
+                if has_role:
+                    target = message.guild.get_channel(MIRROR_TARGET_CHANNEL_ID)
+                    if target:
+                        # Mesajı kopyala
+                        avatar = message.author.display_avatar.url if message.author.display_avatar else None
+                        chan_name = getattr(message.channel, "name", str(message.channel.id))
+                        
+                        e = discord.Embed(color=0xFFD166, description=(content[:4000] or "*(no text)*"))
+                        e.set_author(name=f"{message.author.name} • #{chan_name}", icon_url=avatar)
+                        e.add_field(name="Source", value=f"[Go to message]({message.jump_url})", inline=False)
+                        
+                        if message.attachments:
+                            att = message.attachments[0]
+                            if att.content_type and att.content_type.startswith("image/"):
+                                e.set_image(url=att.url)
+                            if len(message.attachments) > 1:
+                                e.set_footer(text=f"+{len(message.attachments)-1} more attachments")
+                        
+                        try:
+                            await target.send(embed=e)
+                            _mirrored_ids.add(message.id)
+                        except Exception as err:
+                            print(f"[Mirror] Error: {err}")
+        # Bot mesajları başka bir işlem yapmadan çıkar (Register için bot mesajı beklenmiyor)
+        return
+    # 🟢 [YENİ BÖLÜM SONU]
+
+    # DMs -> yönlendir (Orijinal Kod Devam Ediyor)
     if not message.guild and not message.author.bot:
         try:
             await message.channel.send(DM_BLOCK)
@@ -379,7 +429,7 @@ async def on_message(message: discord.Message):
 
     if not AUTO_REGISTER:
         return
-    if message.author.bot or message.channel.id != REGISTER_CHANNEL_ID:
+    if message.channel.id != REGISTER_CHANNEL_ID:
         return
 
     try:
