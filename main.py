@@ -1,6 +1,7 @@
-# main.py — Arcane Arena Verify Bot + Mirror Feature
-# - Verification: Panel, Modal, Google Sheets (Orijinal Kod Korundu)
-# - Mirror: Raid Rush'taki gibi Shop/Duyuru mesajlarını kopyalar (YENİ EKLENDİ)
+# main.py — Arcane Arena Verify Bot
+# 1. Verification: Panel, Modal, Google Sheets
+# 2. Mirror: Raid Rush'taki gibi Shop mesajlarını kopyalar
+# 3. Welcome DM: Sunucuya girene otomatik DM atar ve verify kanalına yönlendirir (YENİ)
 
 import os
 import re
@@ -39,7 +40,7 @@ BRAND       = os.getenv("BRAND", "Arcane Arena")
 
 SHOW_AUTHOR = os.getenv("SHOW_AUTHOR", "false").lower() in ("1", "true", "yes")
 
-# 🟢 [YENİ EKLENDİ] MIRROR SETTINGS (Raid Rush'tan Transfer Edildi)
+# 🔁 MIRROR SETTINGS (Shop Loglama)
 MIRROR_TARGET_CHANNEL_ID  = int(os.getenv("MIRROR_TARGET_CHANNEL_ID", "0"))
 COMMUNITY_MANAGER_ROLE_ID = int(os.getenv("COMMUNITY_MANAGER_ROLE_ID", "0"))
 # Hangi botların mesajı kopyalanacak? (Virgülle ayrılmış ID'ler)
@@ -89,7 +90,7 @@ SUPPORT_USER_ID = os.getenv("SUPPORT_USER_ID", "0")
 # ─────────────────────────────────────────────────────────────────────────────
 # Validation
 EXACT_ASCII_DIGITS_RAW = re.compile(rf"^\d{{{ID_LENGTH}}}$")
-_mirrored_ids: set[int] = set() # 🟢 [YENİ] Mirror takibi için
+_mirrored_ids: set[int] = set()
 
 # Metinler
 REGISTER_JUMP = (
@@ -372,22 +373,52 @@ async def on_ready():
     await tree.sync()
     print(f"✅ Login successful: {client.user} (ID_LENGTH={ID_LENGTH}, AUTO_REGISTER={AUTO_REGISTER})")
 
+# 🆕 YENİ EKLENEN KISIM: SUNUCUYA KATILANLARA DM ATMA
+@client.event
+async def on_member_join(member: discord.Member):
+    # Eğer botun olduğu sunucu değilse (ID kontrolü) veya bot girdiyse
+    if member.bot or (GUILD_ID and member.guild.id != GUILD_ID):
+        return
+    
+    # Register (Welcome) kanalına direkt link
+    channel_link = f"https://discord.com/channels/{member.guild.id}/{REGISTER_CHANNEL_ID}"
+    
+    # Hoş geldin Embed Mesajı
+    emb = discord.Embed(
+        title=f"Welcome to {SERVER_NAME}!",
+        description=(
+            f"Hello {member.mention}, glad to see you here!\n\n"
+            "To gain access to the server channels and chat with others, please **verify your Player ID**.\n\n"
+            f"👉 **Go to Verification Channel:** <#{REGISTER_CHANNEL_ID}>\n"
+            f"[Click here to jump to channel]({channel_link})"
+        ),
+        color=0x57F287  # Yeşil ton
+    )
+    
+    if SHOW_AUTHOR:
+        emb.set_author(name=f"{BRAND} Welcome")
+        
+    try:
+        await member.send(embed=emb)
+        print(f"[Welcome] Sent DM to {member.name}")
+    except discord.Forbidden:
+        # Kullanıcı DM'leri kapattıysa hata vermesin, konsola yazsın
+        print(f"[Welcome] Could not DM {member.name} (DMs closed)")
+    except Exception as e:
+        print(f"[Welcome] Error sending DM to {member.name}: {e}")
+
 @client.event
 async def on_message(message: discord.Message):
-    # 🟢 [YENİ BÖLÜM BAŞLANGICI] - MIRROR LOGIC
-    # Raid Rush botundan alınan mesaj kopyalama mantığı buraya eklendi.
+    # ─── MIRROR LOGIC START ───
     if message.author.bot:
         if (MIRROR_TARGET_CHANNEL_ID and 
             COMMUNITY_MANAGER_ROLE_ID and 
             len(MIRROR_BOT_USER_IDS) > 0 and 
             message.guild):
             
-            # Gönderen bot izin verilenler listesinde mi?
             if message.author.id in MIRROR_BOT_USER_IDS:
-                # Daha önce kopyalandı mı?
                 if message.id in _mirrored_ids: return
 
-                # Mesajda Community Manager rolü etiketlenmiş mi?
                 role_mention = f"<@&{COMMUNITY_MANAGER_ROLE_ID}>"
                 content = message.content or ""
                 has_role = role_mention in content or any(r.id == COMMUNITY_MANAGER_ROLE_ID for r in message.role_mentions)
@@ -395,7 +426,6 @@ async def on_message(message: discord.Message):
                 if has_role:
                     target = message.guild.get_channel(MIRROR_TARGET_CHANNEL_ID)
                     if target:
-                        # Mesajı kopyala
                         avatar = message.author.display_avatar.url if message.author.display_avatar else None
                         chan_name = getattr(message.channel, "name", str(message.channel.id))
                         
@@ -415,11 +445,10 @@ async def on_message(message: discord.Message):
                             _mirrored_ids.add(message.id)
                         except Exception as err:
                             print(f"[Mirror] Error: {err}")
-        # Bot mesajları başka bir işlem yapmadan çıkar (Register için bot mesajı beklenmiyor)
         return
-    # 🟢 [YENİ BÖLÜM SONU]
+    # ─── MIRROR LOGIC END ───
 
-    # DMs -> yönlendir (Orijinal Kod Devam Ediyor)
+    # DMs -> yönlendir
     if not message.guild and not message.author.bot:
         try:
             await message.channel.send(DM_BLOCK)
